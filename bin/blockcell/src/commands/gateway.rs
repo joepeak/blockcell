@@ -2559,7 +2559,7 @@ async fn handle_channels_list(State(state): State<GatewayState>) -> impl IntoRes
             "configured": cfg.discord.enabled && !cfg.discord.bot_token.is_empty(),
             "enabled": cfg.discord.enabled,
             "fields": [
-                {"key": "bot_token", "label": "Bot Token", "secret": true, "value": cfg.discord.bot_token.clone()}
+                {"key": "botToken", "label": "Bot Token", "secret": true, "value": cfg.discord.bot_token.clone()}
             ]
         },
         {
@@ -2570,8 +2570,8 @@ async fn handle_channels_list(State(state): State<GatewayState>) -> impl IntoRes
             "configured": cfg.slack.enabled && !cfg.slack.bot_token.is_empty(),
             "enabled": cfg.slack.enabled,
             "fields": [
-                {"key": "bot_token", "label": "Bot Token", "secret": true, "value": cfg.slack.bot_token.clone()},
-                {"key": "app_token", "label": "App Token", "secret": true, "value": cfg.slack.app_token.clone()}
+                {"key": "botToken", "label": "Bot Token", "secret": true, "value": cfg.slack.bot_token.clone()},
+                {"key": "appToken", "label": "App Token", "secret": true, "value": cfg.slack.app_token.clone()}
             ]
         },
         {
@@ -2582,8 +2582,8 @@ async fn handle_channels_list(State(state): State<GatewayState>) -> impl IntoRes
             "configured": cfg.feishu.enabled && !cfg.feishu.app_id.is_empty(),
             "enabled": cfg.feishu.enabled,
             "fields": [
-                {"key": "app_id", "label": "App ID", "secret": false, "value": cfg.feishu.app_id.clone()},
-                {"key": "app_secret", "label": "App Secret", "secret": true, "value": cfg.feishu.app_secret.clone()}
+                {"key": "appId", "label": "App ID", "secret": false, "value": cfg.feishu.app_id.clone()},
+                {"key": "appSecret", "label": "App Secret", "secret": true, "value": cfg.feishu.app_secret.clone()}
             ]
         },
         {
@@ -2594,8 +2594,8 @@ async fn handle_channels_list(State(state): State<GatewayState>) -> impl IntoRes
             "configured": cfg.dingtalk.enabled && !cfg.dingtalk.app_key.is_empty(),
             "enabled": cfg.dingtalk.enabled,
             "fields": [
-                {"key": "app_key", "label": "App Key", "secret": false, "value": cfg.dingtalk.app_key.clone()},
-                {"key": "app_secret", "label": "App Secret", "secret": true, "value": cfg.dingtalk.app_secret.clone()}
+                {"key": "appKey", "label": "App Key", "secret": false, "value": cfg.dingtalk.app_key.clone()},
+                {"key": "appSecret", "label": "App Secret", "secret": true, "value": cfg.dingtalk.app_secret.clone()}
             ]
         },
         {
@@ -2606,9 +2606,9 @@ async fn handle_channels_list(State(state): State<GatewayState>) -> impl IntoRes
             "configured": cfg.wecom.enabled && !cfg.wecom.corp_id.is_empty(),
             "enabled": cfg.wecom.enabled,
             "fields": [
-                {"key": "corp_id", "label": "Corp ID", "secret": false, "value": cfg.wecom.corp_id.clone()},
-                {"key": "corp_secret", "label": "Corp Secret", "secret": true, "value": cfg.wecom.corp_secret.clone()},
-                {"key": "agent_id", "label": "Agent ID", "secret": false, "value": cfg.wecom.agent_id.to_string()}
+                {"key": "corpId", "label": "Corp ID", "secret": false, "value": cfg.wecom.corp_id.clone()},
+                {"key": "corpSecret", "label": "Corp Secret", "secret": true, "value": cfg.wecom.corp_secret.clone()},
+                {"key": "agentId", "label": "Agent ID", "secret": false, "value": cfg.wecom.agent_id.to_string()}
             ]
         },
         {
@@ -2619,7 +2619,7 @@ async fn handle_channels_list(State(state): State<GatewayState>) -> impl IntoRes
             "configured": cfg.whatsapp.enabled && !cfg.whatsapp.bridge_url.is_empty(),
             "enabled": cfg.whatsapp.enabled,
             "fields": [
-                {"key": "bridge_url", "label": "Bridge URL", "secret": false, "value": cfg.whatsapp.bridge_url.clone()}
+                {"key": "bridgeUrl", "label": "Bridge URL", "secret": false, "value": cfg.whatsapp.bridge_url.clone()}
             ]
         },
         {
@@ -2630,8 +2630,8 @@ async fn handle_channels_list(State(state): State<GatewayState>) -> impl IntoRes
             "configured": cfg.lark.enabled && !cfg.lark.app_id.is_empty(),
             "enabled": cfg.lark.enabled,
             "fields": [
-                {"key": "app_id", "label": "App ID", "secret": false, "value": cfg.lark.app_id.clone()},
-                {"key": "app_secret", "label": "App Secret", "secret": true, "value": cfg.lark.app_secret.clone()}
+                {"key": "appId", "label": "App ID", "secret": false, "value": cfg.lark.app_id.clone()},
+                {"key": "appSecret", "label": "App Secret", "secret": true, "value": cfg.lark.app_secret.clone()}
             ]
         }
     ]);
@@ -2666,13 +2666,23 @@ async fn handle_channel_update(
             .or_insert_with(|| serde_json::json!({}));
 
         if let Some(obj) = ch.as_object_mut() {
-            // Convert field keys from camelCase-like to snake_case where needed
+            // Keep field keys as-is (camelCase) to match config struct serde attributes
             for (k, v) in &req.fields {
-                let snake = to_snake_case(k);
-                obj.insert(snake, v.clone());
+                obj.insert(k.clone(), v.clone());
             }
             if let Some(en) = req.enabled {
                 obj.insert("enabled".to_string(), serde_json::json!(en));
+            }
+            // Clean up stale snake_case keys from previous buggy saves
+            let stale: &[&str] = &[
+                "bot_token", "app_token", "app_id", "app_secret",
+                "app_key", "corp_id", "corp_secret", "agent_id",
+                "bridge_url", "allow_from", "poll_interval_secs",
+                "encrypt_key", "verification_token", "robot_code",
+                "callback_token", "encoding_aes_key",
+            ];
+            for key in stale {
+                obj.remove(*key);
             }
         }
 
@@ -2685,18 +2695,6 @@ async fn handle_channel_update(
         Ok(v) => Json(v),
         Err(e) => Json(serde_json::json!({ "status": "error", "message": e.to_string() })),
     }
-}
-
-fn to_snake_case(s: &str) -> String {
-    // Simple camelCase → snake_case; already snake_case passes through unchanged
-    let mut out = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            out.push('_');
-        }
-        out.push(c.to_lowercase().next().unwrap_or(c));
-    }
-    out
 }
 
 // ---------------------------------------------------------------------------
