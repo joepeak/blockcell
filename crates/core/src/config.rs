@@ -19,7 +19,10 @@ pub struct ProviderConfig {
     pub proxy: Option<String>,
     /// API 接口类型："openai" | "anthropic" | "gemini" | "ollama"
     /// 用于前端显示和接口兼容性标识，默认 "openai"（序列化时省略默认值）
-    #[serde(default = "default_api_type", skip_serializing_if = "is_default_api_type")]
+    #[serde(
+        default = "default_api_type",
+        skip_serializing_if = "is_default_api_type"
+    )]
     pub api_type: String,
 }
 
@@ -81,8 +84,12 @@ pub struct ModelEntry {
     pub output_price: Option<f64>,
 }
 
-fn default_entry_weight() -> u32 { 1 }
-fn default_entry_priority() -> u32 { 1 }
+fn default_entry_weight() -> u32 {
+    1
+}
+fn default_entry_priority() -> u32 {
+    1
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -194,7 +201,7 @@ fn default_ghost_enabled() -> bool {
 }
 
 fn default_ghost_schedule() -> String {
-    "0 */4 * * *" .to_string() // Every 4 hours
+    "0 */4 * * *".to_string() // Every 4 hours
 }
 
 fn default_max_syncs() -> u32 {
@@ -500,8 +507,13 @@ impl Default for GatewayConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebSearchConfig {
+    /// Brave Search API key (optional, for brave_search)
     #[serde(default)]
     pub api_key: String,
+    /// Baidu AI Search API key (optional, for baidu_search)
+    /// Get from https://qianfan.baidubce.com — set env BAIDU_API_KEY or this field
+    #[serde(default)]
+    pub baidu_api_key: String,
     #[serde(default = "default_max_results")]
     pub max_results: u32,
 }
@@ -510,6 +522,7 @@ impl Default for WebSearchConfig {
     fn default() -> Self {
         Self {
             api_key: String::new(),
+            baidu_api_key: String::new(),
             max_results: default_max_results(),
         }
     }
@@ -669,82 +682,120 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         let mut providers = HashMap::new();
-        providers.insert("openrouter".to_string(), ProviderConfig {
-            api_key: String::new(),
-            api_base: Some("https://openrouter.ai/api/v1".to_string()),
-            proxy: None,
-            api_type: "openai".to_string(),
-        });
+        providers.insert(
+            "openrouter".to_string(),
+            ProviderConfig {
+                api_key: String::new(),
+                api_base: Some("https://openrouter.ai/api/v1".to_string()),
+                proxy: None,
+                api_type: "openai".to_string(),
+            },
+        );
         providers.insert("anthropic".to_string(), ProviderConfig::default());
         providers.insert("openai".to_string(), ProviderConfig::default());
         providers.insert("deepseek".to_string(), ProviderConfig::default());
-        providers.insert("groq".to_string(), ProviderConfig {
-            api_key: String::new(),
-            api_base: Some("https://api.groq.com/openai/v1".to_string()),
-            proxy: None,
-            api_type: "openai".to_string(),
-        });
+        providers.insert(
+            "groq".to_string(),
+            ProviderConfig {
+                api_key: String::new(),
+                api_base: Some("https://api.groq.com/openai/v1".to_string()),
+                proxy: None,
+                api_type: "openai".to_string(),
+            },
+        );
         providers.insert("zhipu".to_string(), ProviderConfig::default());
-        providers.insert("vllm".to_string(), ProviderConfig {
-            api_key: "dummy".to_string(),
-            api_base: Some("http://localhost:8000/v1".to_string()),
-            proxy: None,
-            api_type: "openai".to_string(),
-        });
-        providers.insert("gemini".to_string(), ProviderConfig {
-            api_key: String::new(),
-            api_base: Some("https://generativelanguage.googleapis.com/v1beta/openai".to_string()),
-            proxy: None,
-            api_type: "openai".to_string(),
-        });
-        providers.insert("kimi".to_string(), ProviderConfig {
-            api_key: String::new(),
-            api_base: Some("https://api.moonshot.ai/v1".to_string()),
-            proxy: None,
-            api_type: "openai".to_string(),
-        });
-        providers.insert("xai".to_string(), ProviderConfig {
-            api_key: String::new(),
-            api_base: Some("https://api.x.ai/v1".to_string()),
-            proxy: None,
-            api_type: "openai".to_string(),
-        });
-        providers.insert("mistral".to_string(), ProviderConfig {
-            api_key: String::new(),
-            api_base: Some("https://api.mistral.ai/v1".to_string()),
-            proxy: None,
-            api_type: "openai".to_string(),
-        });
-        providers.insert("minimax".to_string(), ProviderConfig {
-            api_key: String::new(),
-            api_base: Some("https://api.minimax.chat/v1".to_string()),
-            proxy: None,
-            api_type: "anthropic".to_string(),
-        });
-        providers.insert("qwen".to_string(), ProviderConfig {
-            api_key: String::new(),
-            api_base: Some("https://api.qwen.ai/v1".to_string()),
-            proxy: None,
-            api_type: "openai".to_string(),
-        });
-        providers.insert("glm".to_string(), ProviderConfig {
-            api_key: String::new(),
-            api_base: Some("https://api.z.ai/v1".to_string()),
-            proxy: None,
-            api_type: "openai".to_string(),
-        });
-        providers.insert("siliconflow".to_string(), ProviderConfig {
-            api_key: String::new(),
-            api_base: Some("https://api.siliconflow.cn/v1".to_string()),
-            proxy: None,
-            api_type: "openai".to_string(),
-        });
-        providers.insert("ollama".to_string(), ProviderConfig {
-            api_key: "ollama".to_string(),
-            api_base: Some("http://localhost:11434".to_string()),
-            proxy: None,
-            api_type: "ollama".to_string(),
-        });
+        providers.insert(
+            "vllm".to_string(),
+            ProviderConfig {
+                api_key: "dummy".to_string(),
+                api_base: Some("http://localhost:8000/v1".to_string()),
+                proxy: None,
+                api_type: "openai".to_string(),
+            },
+        );
+        providers.insert(
+            "gemini".to_string(),
+            ProviderConfig {
+                api_key: String::new(),
+                api_base: Some(
+                    "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
+                ),
+                proxy: None,
+                api_type: "openai".to_string(),
+            },
+        );
+        providers.insert(
+            "kimi".to_string(),
+            ProviderConfig {
+                api_key: String::new(),
+                api_base: Some("https://api.moonshot.ai/v1".to_string()),
+                proxy: None,
+                api_type: "openai".to_string(),
+            },
+        );
+        providers.insert(
+            "xai".to_string(),
+            ProviderConfig {
+                api_key: String::new(),
+                api_base: Some("https://api.x.ai/v1".to_string()),
+                proxy: None,
+                api_type: "openai".to_string(),
+            },
+        );
+        providers.insert(
+            "mistral".to_string(),
+            ProviderConfig {
+                api_key: String::new(),
+                api_base: Some("https://api.mistral.ai/v1".to_string()),
+                proxy: None,
+                api_type: "openai".to_string(),
+            },
+        );
+        providers.insert(
+            "minimax".to_string(),
+            ProviderConfig {
+                api_key: String::new(),
+                api_base: Some("https://api.minimax.chat/v1".to_string()),
+                proxy: None,
+                api_type: "anthropic".to_string(),
+            },
+        );
+        providers.insert(
+            "qwen".to_string(),
+            ProviderConfig {
+                api_key: String::new(),
+                api_base: Some("https://api.qwen.ai/v1".to_string()),
+                proxy: None,
+                api_type: "openai".to_string(),
+            },
+        );
+        providers.insert(
+            "glm".to_string(),
+            ProviderConfig {
+                api_key: String::new(),
+                api_base: Some("https://api.z.ai/v1".to_string()),
+                proxy: None,
+                api_type: "openai".to_string(),
+            },
+        );
+        providers.insert(
+            "siliconflow".to_string(),
+            ProviderConfig {
+                api_key: String::new(),
+                api_base: Some("https://api.siliconflow.cn/v1".to_string()),
+                proxy: None,
+                api_type: "openai".to_string(),
+            },
+        );
+        providers.insert(
+            "ollama".to_string(),
+            ProviderConfig {
+                api_key: "ollama".to_string(),
+                api_base: Some("http://localhost:11434".to_string()),
+                proxy: None,
+                api_type: "ollama".to_string(),
+            },
+        );
 
         Self {
             providers,
@@ -787,7 +838,16 @@ impl Config {
 
     pub fn get_api_key(&self) -> Option<(&str, &ProviderConfig)> {
         let priority = [
-            "openrouter", "deepseek", "anthropic", "openai", "kimi", "gemini", "zhipu", "groq", "vllm", "ollama",
+            "openrouter",
+            "deepseek",
+            "anthropic",
+            "openai",
+            "kimi",
+            "gemini",
+            "zhipu",
+            "groq",
+            "vllm",
+            "ollama",
         ];
 
         for name in priority {
@@ -836,7 +896,10 @@ mod tests {
   "providers": {}
 }"#;
         let cfg: Config = serde_json::from_str(raw).unwrap();
-        assert_eq!(cfg.community_hub_url().as_deref(), Some("http://example.com"));
+        assert_eq!(
+            cfg.community_hub_url().as_deref(),
+            Some("http://example.com")
+        );
         assert_eq!(cfg.community_hub_api_key().as_deref(), Some("k"));
     }
 }
