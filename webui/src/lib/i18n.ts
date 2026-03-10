@@ -439,6 +439,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'files.downloadToView': 'Download to view',
 
     // Skills
+    'models.count': '{n} models',
     'skills.sources': 'Skill Sources',
     'skills.sourcesDesc': 'Explore official OpenClaw compatible skill repositories',
     'skills.officialRepo': 'OpenClaw Official Repo',
@@ -562,6 +563,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'llm.forceDirect': 'Force direct (bypass global proxy)',
     'llm.inheritGlobal': 'Inheriting global proxy (see Settings)',
     'llm.testConnection': 'Test Connection',
+    'llm.testConnectionNoModel': 'Please add a model to this provider\'s model pool before testing connection.',
     'llm.modelPool': 'Model Pool',
     'llm.modelPoolDesc': 'Configure multiple models for load balancing and failover',
     'llm.addEntry': 'Add Entry',
@@ -569,6 +571,13 @@ const translations: Record<Locale, Record<string, string>> = {
     'llm.provider': 'Provider',
     'llm.weight': 'Weight',
     'llm.priority': 'Priority',
+    'llm.toolCallMode': 'Tool Call Mode',
+    'llm.toolCallModeDesc': 'Choose how this model performs tool usage. Use text mode for OpenAI-compatible models that do not support native tool_calls.',
+    'llm.toolCallMode.native': 'native',
+    'llm.toolCallMode.text': 'text',
+    'llm.toolCallMode.none': 'none',
+    'llm.toolCallMode.auto': 'auto',
+    'llm.toolCallMode.help': 'native = built-in tools API, text = prompt-based tool protocol, none = disable tools, auto = try native then fall back to text.',
     'llm.deleteProvider': 'Delete Provider',
     'llm.deleteConfirm': 'Delete provider "{name}" and all its configuration?',
 
@@ -1033,6 +1042,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'files.downloadToView': '下载后查看',
 
     // Skills
+    'models.count': '{n} 个模型',
     'skills.sources': '技能来源',
     'skills.sourcesDesc': '探索官方 OpenClaw 兼容技能仓库',
     'skills.officialRepo': 'OpenClaw GitHub 官方技能仓库',
@@ -1156,6 +1166,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'llm.forceDirect': '强制直连（bypass 全局代理）',
     'llm.inheritGlobal': '继承全局代理（见设置页）',
     'llm.testConnection': '测试连接',
+    'llm.testConnectionNoModel': '请先为该供应商在模型池中添加模型，再测试连接。',
     'llm.modelPool': '模型池',
     'llm.modelPoolDesc': '配置多个模型实现负载均衡和故障转移',
     'llm.addEntry': '添加条目',
@@ -1163,6 +1174,13 @@ const translations: Record<Locale, Record<string, string>> = {
     'llm.provider': '供应商',
     'llm.weight': '权重',
     'llm.priority': '优先级',
+    'llm.toolCallMode': '工具调用模式',
+    'llm.toolCallModeDesc': '选择该模型如何使用工具。对于不支持原生 tool_calls 的 OpenAI 兼容模型，建议使用 text。',
+    'llm.toolCallMode.native': 'native',
+    'llm.toolCallMode.text': 'text',
+    'llm.toolCallMode.none': 'none',
+    'llm.toolCallMode.auto': 'auto',
+    'llm.toolCallMode.help': 'native = 原生工具 API，text = 基于提示词的文本工具协议，none = 禁用工具，auto = 先尝试 native 再自动降级到 text。',
     'llm.deleteProvider': '删除供应商',
     'llm.deleteConfirm': '删除供应商「{name}」及其所有配置？',
 

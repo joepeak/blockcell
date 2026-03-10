@@ -65,6 +65,16 @@ impl Default for CommunityHubConfig {
 }
 
 /// 一个可用的"模型+供应商"条目，用于 model_pool 多模型高可用配置。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolCallMode {
+    #[default]
+    Native,
+    Text,
+    None,
+    Auto,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelEntry {
@@ -84,6 +94,13 @@ pub struct ModelEntry {
     /// 输出价格（USD/1M tokens），可选
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_price: Option<f64>,
+    /// 工具调用模式：
+    /// - native: 使用 API 原生 tools/tool_calls
+    /// - text: 不发送 tools，改为文本协议 <tool_call> ... </tool_call>
+    /// - none: 禁用工具
+    /// - auto: 先尝试 native，失败或被中继剥离后自动退化为 text
+    #[serde(default, skip_serializing_if = "is_default_tool_call_mode")]
+    pub tool_call_mode: ToolCallMode,
 }
 
 fn default_entry_weight() -> u32 {
@@ -91,6 +108,10 @@ fn default_entry_weight() -> u32 {
 }
 fn default_entry_priority() -> u32 {
     1
+}
+
+fn is_default_tool_call_mode(mode: &ToolCallMode) -> bool {
+    matches!(mode, ToolCallMode::Native)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

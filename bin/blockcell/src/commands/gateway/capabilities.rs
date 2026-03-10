@@ -442,6 +442,7 @@ pub(super) async fn handle_pool_status(State(state): State<GatewayState>) -> imp
                     "provider": e.provider,
                     "weight": e.weight,
                     "priority": e.priority,
+                    "toolCallMode": e.tool_call_mode,
                 })
             })
             .collect()
@@ -452,6 +453,7 @@ pub(super) async fn handle_pool_status(State(state): State<GatewayState>) -> imp
             "provider": defaults.provider,
             "weight": 1,
             "priority": 1,
+            "toolCallMode": "native",
         })]
     };
 

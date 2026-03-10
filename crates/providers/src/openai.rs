@@ -1,10 +1,11 @@
 use async_trait::async_trait;
+use blockcell_core::config::ToolCallMode;
 use blockcell_core::types::{ChatMessage, LLMResponse, ToolCallRequest};
 use blockcell_core::{Error, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -30,10 +31,7 @@ pub struct OpenAIProvider {
     model: String,
     max_tokens: u32,
     temperature: f32,
-    /// When true, tool schemas are injected into the system prompt as text
-    /// instead of using the API `tools` parameter. This works around relays
-    /// that strip `tool_calls` from the response.
-    text_tool_mode: AtomicBool,
+    tool_call_mode: AtomicU8,
 }
 
 impl OpenAIProvider {
@@ -53,6 +51,7 @@ impl OpenAIProvider {
             None,
             None,
             &[],
+            ToolCallMode::Native,
         )
     }
 
@@ -65,6 +64,7 @@ impl OpenAIProvider {
         provider_proxy: Option<&str>,
         global_proxy: Option<&str>,
         no_proxy: &[String],
+        tool_call_mode: ToolCallMode,
     ) -> Self {
         let resolved_base = api_base
             .unwrap_or("https://api.openai.com/v1")
@@ -84,7 +84,25 @@ impl OpenAIProvider {
             model: model.to_string(),
             max_tokens,
             temperature,
-            text_tool_mode: AtomicBool::new(false),
+            tool_call_mode: AtomicU8::new(Self::mode_to_u8(tool_call_mode)),
+        }
+    }
+
+    fn mode_to_u8(mode: ToolCallMode) -> u8 {
+        match mode {
+            ToolCallMode::Native => 0,
+            ToolCallMode::Text => 1,
+            ToolCallMode::None => 2,
+            ToolCallMode::Auto => 3,
+        }
+    }
+
+    fn mode_from_u8(mode: u8) -> ToolCallMode {
+        match mode {
+            1 => ToolCallMode::Text,
+            2 => ToolCallMode::None,
+            3 => ToolCallMode::Auto,
+            _ => ToolCallMode::Native,
         }
     }
 
@@ -131,6 +149,68 @@ impl OpenAIProvider {
     /// - `<tool_call>{"name":"...","arguments":{...}}</tool_call>`
     /// - `[TOOL_CALL]{tool => "...", args => {...}}[/TOOL_CALL]`
     /// Returns (remaining_text, parsed_tool_calls).
+    fn parse_function_parameter_tool_block(
+        block: &str,
+        call_index: u64,
+    ) -> Option<ToolCallRequest> {
+        let trimmed = block.trim();
+        let lower = trimmed.to_lowercase();
+
+        let func_start = lower.find("<function=")?;
+        let after_func = &trimmed[func_start + "<function=".len()..];
+        let func_end = after_func.find('>')?;
+        let tool_name = after_func[..func_end].trim().to_string();
+        if tool_name.is_empty() {
+            return None;
+        }
+
+        let body = &after_func[func_end + 1..];
+        let body_lower = body.to_lowercase();
+        let body_end = body_lower.find("</function>").unwrap_or(body.len());
+        let params_str = &body[..body_end];
+
+        let mut args = serde_json::Map::new();
+        let mut scan = params_str;
+
+        loop {
+            let scan_lower = scan.to_lowercase();
+            let Some(param_start) = scan_lower.find("<parameter=") else {
+                break;
+            };
+
+            let after_param = &scan[param_start + "<parameter=".len()..];
+            let Some(param_name_end) = after_param.find('>') else {
+                break;
+            };
+
+            let param_name = after_param[..param_name_end].trim().to_string();
+            if param_name.is_empty() {
+                scan = &after_param[param_name_end + 1..];
+                continue;
+            }
+
+            let value_str = &after_param[param_name_end + 1..];
+            let value_lower = value_str.to_lowercase();
+            let Some(close_idx) = value_lower.find("</parameter>") else {
+                break;
+            };
+
+            let raw_value = value_str[..close_idx].trim();
+            let json_val = serde_json::from_str::<Value>(raw_value)
+                .unwrap_or_else(|_| Value::String(raw_value.to_string()));
+            args.insert(param_name, json_val);
+
+            scan = &value_str[close_idx + "</parameter>".len()..];
+        }
+
+        Some(ToolCallRequest {
+            id: format!("text_call_{}", call_index),
+            name: tool_name,
+            arguments: Value::Object(args),
+            thought_signature: None,
+        })
+    }
+
     fn parse_text_tool_calls(content: &str) -> (String, Vec<ToolCallRequest>) {
         let mut tool_calls = Vec::new();
         let mut remaining = String::new();
@@ -143,8 +223,8 @@ impl OpenAIProvider {
                 remaining.push_str(&rest[..start]);
                 let after_tag = &rest[start + "<tool_call>".len()..];
                 if let Some(end) = after_tag.find("</tool_call>") {
-                    let json_str = after_tag[..end].trim();
-                    if let Ok(val) = serde_json::from_str::<Value>(json_str) {
+                    let block = after_tag[..end].trim();
+                    if let Ok(val) = serde_json::from_str::<Value>(block) {
                         let name = val
                             .get("name")
                             .and_then(|v| v.as_str())
@@ -161,8 +241,13 @@ impl OpenAIProvider {
                             thought_signature: None,
                         });
                         call_index += 1;
+                    } else if let Some(tc) =
+                        Self::parse_function_parameter_tool_block(block, call_index)
+                    {
+                        tool_calls.push(tc);
+                        call_index += 1;
                     } else {
-                        warn!(json = %json_str, "Failed to parse tool_call JSON");
+                        warn!(json = %block, "Failed to parse tool_call JSON");
                         remaining.push_str(
                             &rest[start..start + "<tool_call>".len() + end + "</tool_call>".len()],
                         );
@@ -733,10 +818,9 @@ struct FunctionCall {
 #[async_trait]
 impl Provider for OpenAIProvider {
     async fn chat(&self, messages: &[ChatMessage], tools: &[Value]) -> Result<LLMResponse> {
-        let use_text_mode = self.text_tool_mode.load(Ordering::Relaxed);
+        let mode = Self::mode_from_u8(self.tool_call_mode.load(Ordering::Relaxed));
 
-        if !use_text_mode && !tools.is_empty() {
-            // Try native tool calling first
+        if !tools.is_empty() && !matches!(mode, ToolCallMode::Text | ToolCallMode::None) {
             let (chat_response, _raw) = self.send_request(messages, tools, true).await?;
 
             let choice = chat_response
@@ -765,51 +849,40 @@ impl Provider for OpenAIProvider {
             let content = choice.message.content.unwrap_or_default();
             let reasoning_content = choice.message.reasoning_content.clone();
 
-            // Detect if the relay stripped tool_calls:
-            // - content is empty
-            // - no tool_calls returned
-            // - usage shows completion_tokens > 0 (model did generate something)
-            if content.is_empty() && native_tool_calls.is_empty() {
-                warn!("Native tool call returned empty content and no tool_calls. Switching to text-based tool mode.");
-                self.text_tool_mode.store(true, Ordering::Relaxed);
-                // Fall through to text mode below
-            } else if !native_tool_calls.is_empty() || tools.is_empty() {
-                // Native tool calls present, or no tools were requested — return as-is
+            if !native_tool_calls.is_empty() || tools.is_empty() {
                 return Ok(LLMResponse {
-                    content: if content.is_empty() {
-                        None
-                    } else {
-                        Some(content)
-                    },
+                    content: if content.is_empty() { None } else { Some(content) },
                     reasoning_content,
                     tool_calls: native_tool_calls,
                     finish_reason: choice.finish_reason.unwrap_or_else(|| "stop".to_string()),
                     usage: chat_response.usage.unwrap_or(Value::Null),
                 });
-            } else {
-                // No native tool_calls but content is non-empty and tools were requested.
-                // Some models (e.g. xminimaxm25) return tool calls as text in content
-                // instead of using the native function calling mechanism.
-                // Try to parse text-based tool calls from the content.
-                let (remaining_text, parsed_calls) = Self::parse_text_tool_calls(&content);
-                if !parsed_calls.is_empty() {
-                    info!(
-                        count = parsed_calls.len(),
-                        "Parsed text-based tool calls from native mode response"
-                    );
-                    return Ok(LLMResponse {
-                        content: if remaining_text.is_empty() {
-                            None
-                        } else {
-                            Some(remaining_text)
-                        },
-                        reasoning_content,
-                        tool_calls: parsed_calls,
-                        finish_reason: "tool_calls".to_string(),
-                        usage: chat_response.usage.unwrap_or(Value::Null),
-                    });
+            }
+
+            let (remaining_text, parsed_calls) = Self::parse_text_tool_calls(&content);
+            if !parsed_calls.is_empty() {
+                info!(
+                    count = parsed_calls.len(),
+                    "Parsed text-based tool calls from native mode response"
+                );
+                if matches!(mode, ToolCallMode::Auto) {
+                    self.tool_call_mode
+                        .store(Self::mode_to_u8(ToolCallMode::Text), Ordering::Relaxed);
                 }
-                // No text-based tool calls found either — return as normal text
+                return Ok(LLMResponse {
+                    content: if remaining_text.is_empty() {
+                        None
+                    } else {
+                        Some(remaining_text)
+                    },
+                    reasoning_content,
+                    tool_calls: parsed_calls,
+                    finish_reason: "tool_calls".to_string(),
+                    usage: chat_response.usage.unwrap_or(Value::Null),
+                });
+            }
+
+            if !content.is_empty() || matches!(mode, ToolCallMode::Native) {
                 return Ok(LLMResponse {
                     content: Some(content),
                     reasoning_content,
@@ -818,10 +891,18 @@ impl Provider for OpenAIProvider {
                     usage: chat_response.usage.unwrap_or(Value::Null),
                 });
             }
+
+            warn!("Native tool call returned no tool_calls; falling back to text tool mode");
+            self.tool_call_mode
+                .store(Self::mode_to_u8(ToolCallMode::Text), Ordering::Relaxed);
         }
 
-        // Text-based tool mode (or no tools)
-        let (chat_response, _raw) = self.send_request(messages, tools, false).await?;
+        let text_tools: &[Value] = if matches!(mode, ToolCallMode::None) {
+            &[]
+        } else {
+            tools
+        };
+        let (chat_response, _raw) = self.send_request(messages, text_tools, false).await?;
 
         let choice = chat_response
             .choices
@@ -908,6 +989,23 @@ Done."#;
         assert_eq!(calls[0].name, "web_search");
         assert_eq!(calls[0].arguments["query"], "rust programming");
         assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn test_parse_function_parameter_tool_call() {
+        let content = r#"我来帮你查看当前目录下的文件：
+<tool_call>
+<function=exec>
+<parameter=command>
+ls -la
+</parameter>
+</function>
+</tool_call>"#;
+        let (remaining, calls) = OpenAIProvider::parse_text_tool_calls(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "exec");
+        assert_eq!(calls[0].arguments["command"], "ls -la");
+        assert!(remaining.contains("我来帮你查看当前目录下的文件"));
     }
 
     #[test]

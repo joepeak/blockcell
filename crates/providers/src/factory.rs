@@ -1,3 +1,4 @@
+use blockcell_core::config::ToolCallMode;
 use blockcell_core::Config;
 
 use crate::{
@@ -87,6 +88,15 @@ pub fn create_provider(
     config: &Config,
     model: &str,
     explicit_provider: Option<&str>,
+) -> anyhow::Result<Box<dyn Provider>> {
+    create_provider_with_tool_mode(config, model, explicit_provider, None)
+}
+
+pub fn create_provider_with_tool_mode(
+    config: &Config,
+    model: &str,
+    explicit_provider: Option<&str>,
+    tool_call_mode: Option<ToolCallMode>,
 ) -> anyhow::Result<Box<dyn Provider>> {
     let max_tokens = config.agents.defaults.max_tokens;
     let temperature = config.agents.defaults.temperature;
@@ -228,6 +238,7 @@ pub fn create_provider(
                         provider_proxy,
                         global_proxy,
                         no_proxy,
+                        tool_call_mode.unwrap_or(ToolCallMode::Native),
                     )) as Box<dyn Provider>)
                 }
                 _ => {
@@ -245,6 +256,7 @@ pub fn create_provider(
                         provider_proxy,
                         global_proxy,
                         no_proxy,
+                        tool_call_mode.unwrap_or(ToolCallMode::Native),
                     )) as Box<dyn Provider>)
                 }
             }
@@ -256,7 +268,7 @@ pub fn create_provider(
 pub fn create_main_provider(config: &Config) -> anyhow::Result<Box<dyn Provider>> {
     let model = &config.agents.defaults.model;
     let explicit_provider = config.agents.defaults.provider.as_deref();
-    create_provider(config, model, explicit_provider)
+    create_provider_with_tool_mode(config, model, explicit_provider, None)
 }
 
 /// 为自进化创建独立的 provider
@@ -277,7 +289,7 @@ pub fn create_evolution_provider(config: &Config) -> anyhow::Result<Box<dyn Prov
         .as_deref()
         .or(config.agents.defaults.provider.as_deref());
 
-    create_provider(config, model, explicit_provider)
+    create_provider_with_tool_mode(config, model, explicit_provider, None)
 }
 
 #[cfg(test)]

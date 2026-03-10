@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Context};
-use blockcell_core::config::{ModelEntry, ProviderConfig};
+use blockcell_core::config::{ModelEntry, ProviderConfig, ToolCallMode};
 use blockcell_core::{Config, Paths};
 use std::io::{self, Write};
 
@@ -185,6 +185,7 @@ fn configure_provider(
         priority: 1,
         input_price: None,
         output_price: None,
+        tool_call_mode: ToolCallMode::Native,
     }];
     config.agents.defaults.provider = Some(provider.to_string());
     config.agents.defaults.model = final_model;

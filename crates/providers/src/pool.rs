@@ -2,10 +2,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use blockcell_core::config::ToolCallMode;
 use blockcell_core::Config;
 use tracing::{info, warn};
 
-use crate::factory::create_provider;
+use crate::factory::create_provider_with_tool_mode;
 use crate::Provider;
 
 /// 单个池条目的运行时健康状态
@@ -85,17 +86,25 @@ impl ProviderPool {
         let defaults = &config.agents.defaults;
 
         // 收集 ModelEntry 列表（兼容旧配置）
-        let entries_cfg: Vec<(String, String, u32, u32)> = if !defaults.model_pool.is_empty() {
+        let entries_cfg: Vec<(String, String, u32, u32, ToolCallMode)> = if !defaults.model_pool.is_empty() {
             defaults
                 .model_pool
                 .iter()
-                .map(|e| (e.model.clone(), e.provider.clone(), e.weight, e.priority))
+                .map(|e| {
+                    (
+                        e.model.clone(),
+                        e.provider.clone(),
+                        e.weight,
+                        e.priority,
+                        e.tool_call_mode,
+                    )
+                })
                 .collect()
         } else {
             // 旧配置：单条目
             let model = defaults.model.clone();
             let provider_name = defaults.provider.clone().unwrap_or_default();
-            vec![(model, provider_name, 1, 1)]
+            vec![(model, provider_name, 1, 1, ToolCallMode::Native)]
         };
 
         if entries_cfg.is_empty() {
@@ -108,13 +117,15 @@ impl ProviderPool {
         let mut health_map = HashMap::new();
         let stats_map = HashMap::new();
 
-        for (idx, (model, provider_name, weight, priority)) in entries_cfg.into_iter().enumerate() {
+        for (idx, (model, provider_name, weight, priority, tool_call_mode)) in
+            entries_cfg.into_iter().enumerate()
+        {
             let explicit = if provider_name.is_empty() {
                 None
             } else {
                 Some(provider_name.as_str())
             };
-            match create_provider(config, &model, explicit) {
+            match create_provider_with_tool_mode(config, &model, explicit, Some(tool_call_mode)) {
                 Ok(p) => {
                     info!(
                         idx, model = %model, provider = %provider_name,
@@ -423,6 +434,7 @@ mod tests {
             priority: 1,
             input_price: None,
             output_price: None,
+            tool_call_mode: blockcell_core::config::ToolCallMode::Native,
         }];
         let result = ProviderPool::from_config(&config);
         assert!(
@@ -446,6 +458,7 @@ mod tests {
             priority: 1,
             input_price: None,
             output_price: None,
+            tool_call_mode: blockcell_core::config::ToolCallMode::Native,
         }];
         let pool = ProviderPool::from_config(&config).unwrap();
         // 连续上报 3 次 Transient 应触发冷却
@@ -469,6 +482,7 @@ mod tests {
             priority: 1,
             input_price: None,
             output_price: None,
+            tool_call_mode: blockcell_core::config::ToolCallMode::Native,
         }];
         let pool = ProviderPool::from_config(&config).unwrap();
         pool.report(0, CallResult::AuthError);

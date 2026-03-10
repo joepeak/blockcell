@@ -477,6 +477,7 @@ export interface PoolEntry {
   provider: string;
   weight: number;
   priority: number;
+  toolCallMode?: 'native' | 'text' | 'none' | 'auto';
 }
 
 export interface PoolStatus {

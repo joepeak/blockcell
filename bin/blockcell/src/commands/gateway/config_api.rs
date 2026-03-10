@@ -180,6 +180,7 @@ pub(super) async fn handle_config_test_provider(
         proxy,
         None,
         &[],
+        blockcell_core::config::ToolCallMode::Native,
     );
 
     match provider.chat(&test_messages, &[]).await {

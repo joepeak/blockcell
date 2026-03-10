@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use blockcell_core::config::ToolCallMode;
 use blockcell_core::types::{ChatMessage, LLMResponse, ToolCallRequest};
 use blockcell_core::{Error, Result};
 use reqwest::Client;
@@ -16,6 +17,7 @@ pub struct OpenAIResponsesProvider {
     api_base: String,
     model: String,
     max_tokens: u32,
+    tool_call_mode: ToolCallMode,
 }
 
 impl OpenAIResponsesProvider {
@@ -47,6 +49,7 @@ impl OpenAIResponsesProvider {
             None,
             None,
             &[],
+            ToolCallMode::Native,
         )
     }
 
@@ -59,6 +62,7 @@ impl OpenAIResponsesProvider {
         provider_proxy: Option<&str>,
         global_proxy: Option<&str>,
         no_proxy: &[String],
+        tool_call_mode: ToolCallMode,
     ) -> Self {
         let resolved_base = api_base
             .unwrap_or("https://api.openai.com/v1")
@@ -77,6 +81,7 @@ impl OpenAIResponsesProvider {
             api_base: resolved_base,
             model: model.to_string(),
             max_tokens,
+            tool_call_mode,
         }
     }
 
@@ -268,7 +273,11 @@ impl OpenAIResponsesProvider {
         let request = ResponsesRequest {
             model: self.model.clone(),
             input: Self::build_input(messages),
-            tools: Self::build_tools(tools),
+            tools: if matches!(self.tool_call_mode, ToolCallMode::Text | ToolCallMode::None) {
+                vec![]
+            } else {
+                Self::build_tools(tools)
+            },
             max_output_tokens: self.max_tokens,
         };
 

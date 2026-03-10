@@ -44,6 +44,7 @@ interface ModelEntry {
   provider: string;
   weight: number;
   priority: number;
+  toolCallMode?: 'native' | 'text' | 'none' | 'auto';
   temperature?: number;
   maxTokens?: number;
   inputPrice?: number;  // USD/1M tokens
@@ -96,6 +97,7 @@ export function LLMPage() {
           provider: defaults.provider || '',
           weight: 1,
           priority: 1,
+          toolCallMode: 'native',
           temperature: defaults.temperature,
           maxTokens: defaults.maxTokens,
         };
@@ -126,6 +128,7 @@ export function LLMPage() {
           provider: e.provider,
           weight: e.weight,
           priority: e.priority,
+          toolCallMode: e.toolCallMode ?? 'native',
           temperature: e.temperature,
           maxTokens: e.maxTokens,
           inputPrice: e.inputPrice,
@@ -220,13 +223,21 @@ export function LLMPage() {
     if (!selectedProvider) return;
     const cfg = providers[selectedProvider];
     if (!cfg) return;
-    
+
+    const firstModelEntry = modelPool.find(m => m.provider === selectedProvider);
+    if (!firstModelEntry?.model?.trim()) {
+      setTestResult({
+        ok: false,
+        msg: t('llm.testConnectionNoModel'),
+      });
+      return;
+    }
+
     setTesting(true); setTestResult(null);
     try {
       const kp = knownFor(selectedProvider);
-      const model = kp?.models[0] || 'gpt-3.5-turbo';
       const res = await testProvider({
-        model,
+        model: firstModelEntry.model.trim(),
         api_key: cfg.apiKey || '',
         api_base: cfg.apiBase || kp?.defaultBase,
         proxy: cfg.proxy || undefined,
@@ -324,7 +335,7 @@ export function LLMPage() {
                     {isActive && <ChevronRight size={12} className="text-rust shrink-0" />}
                   </div>
                   <p className="text-[10px] text-muted-foreground mt-0.5">
-                    {t('skills.count', { n: modelCount })}
+                    {t('models.count', { n: modelCount })}
                   </p>
                 </button>
               );
@@ -576,6 +587,29 @@ export function LLMPage() {
                                   onChange={e => updateModel(index, { weight: parseInt(e.target.value) || 1 })}
                                   className="w-full px-3 py-1.5 text-sm bg-muted/30 border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-rust/40"
                                 />
+                              </div>
+                            </div>
+
+                            {/* Tool Call Mode */}
+                            <div>
+                              <label className="block text-xs font-medium text-muted-foreground mb-1.5">
+                                {t('llm.toolCallMode')}
+                              </label>
+                              <div className="mb-1.5 text-[10px] text-muted-foreground">
+                                {t('llm.toolCallModeDesc')}
+                              </div>
+                              <select
+                                value={model.toolCallMode ?? 'native'}
+                                onChange={e => updateModel(index, { toolCallMode: e.target.value as ModelEntry['toolCallMode'] })}
+                                className="w-full px-3 py-1.5 text-sm bg-muted/30 border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-rust/40"
+                              >
+                                <option value="native">{t('llm.toolCallMode.native')}</option>
+                                <option value="text">{t('llm.toolCallMode.text')}</option>
+                                <option value="none">{t('llm.toolCallMode.none')}</option>
+                                <option value="auto">{t('llm.toolCallMode.auto')}</option>
+                              </select>
+                              <div className="mt-1 text-[10px] text-muted-foreground">
+                                {t('llm.toolCallMode.help')}
                               </div>
                             </div>
 
