@@ -1,5 +1,6 @@
 use crate::account::qq_account_id;
 use blockcell_core::{Config, Error, InboundMessage, Result};
+use futures::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -7,11 +8,44 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 use tracing::{debug, error, info, warn};
 
 const QQ_API_BASE: &str = "https://api.sgroup.qq.com";
 const QQ_SANDBOX_API_BASE: &str = "https://sandbox.api.sgroup.qq.com";
 const QQ_AUTH_URL: &str = "https://bots.qq.com/app/getAppAccessToken";
+const QQ_WS_GATEWAY: &str = "wss://api.sgroup.qq.com/websocket/";
+const QQ_SANDBOX_WS_GATEWAY: &str = "wss://sandbox.api.sgroup.qq.com/websocket/";
+
+// ---------------------------------------------------------------------------
+// OP Codes for QQ WebSocket Gateway
+// ---------------------------------------------------------------------------
+
+mod op_code {
+    pub const DISPATCH: u8 = 0;
+    pub const HEARTBEAT: u8 = 1;
+    pub const IDENTIFY: u8 = 2;
+    pub const RESUME: u8 = 6;
+    pub const RECONNECT: u8 = 7;
+    pub const INVALID_SESSION: u8 = 9;
+    pub const HELLO: u8 = 10;
+    pub const HEARTBEAT_ACK: u8 = 11;
+}
+
+// ---------------------------------------------------------------------------
+// Intents for QQ WebSocket Gateway
+// ---------------------------------------------------------------------------
+
+mod intents {
+    pub const GUILDS: u32 = 1 << 0;
+    pub const GUILD_MEMBERS: u32 = 1 << 1;
+    pub const GUILD_MESSAGES: u32 = 1 << 9;
+    pub const GROUP_AND_C2C_EVENT: u32 = 1 << 25;
+    pub const PUBLIC_GUILD_MESSAGES: u32 = 1 << 30;
+}
+
+// Default intents: public guild messages + group and c2c events
+const DEFAULT_INTENTS: u32 = intents::PUBLIC_GUILD_MESSAGES | intents::GROUP_AND_C2C_EVENT;
 
 // ---------------------------------------------------------------------------
 // Global state for webhook-based channel (shared across all instances)
@@ -68,6 +102,13 @@ impl QQEnvironment {
             QQEnvironment::Sandbox => QQ_SANDBOX_API_BASE,
         }
     }
+
+    fn ws_gateway(&self) -> &'static str {
+        match self {
+            QQEnvironment::Production => QQ_WS_GATEWAY,
+            QQEnvironment::Sandbox => QQ_SANDBOX_WS_GATEWAY,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,6 +126,23 @@ struct AccessTokenResponse {
     access_token: String,
     #[serde(default)]
     expires_in: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct GatewayPayload {
+    op: u8,
+    #[serde(default)]
+    d: Value,
+    #[serde(default)]
+    s: Option<u64>,
+    #[serde(default)]
+    t: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HelloData {
+    #[serde(default)]
+    heartbeat_interval: u32,
 }
 
 pub struct QQChannel {
@@ -126,7 +184,6 @@ impl QQChannel {
         allow_from.iter().any(|allowed| allowed == "*" || allowed == user_id)
     }
 
-    #[allow(dead_code)]
     async fn get_access_token(&self) -> Result<String> {
         let app_id = self.config.channels.qq.app_id.clone();
         let cache = token_cache();
@@ -369,6 +426,27 @@ impl QQChannel {
         Ok(())
     }
 
+    async fn handle_dispatch_event(&self, event_type: &str, data: &Value) {
+        match event_type {
+            "C2C_MESSAGE_CREATE" => {
+                if let Err(e) = self.handle_c2c_message(data).await {
+                    error!("Failed to handle C2C message: {}", e);
+                }
+            }
+            "GROUP_AT_MESSAGE_CREATE" => {
+                if let Err(e) = self.handle_group_at_message(data).await {
+                    error!("Failed to handle group AT message: {}", e);
+                }
+            }
+            "READY" => {
+                info!("QQ WebSocket connection ready");
+            }
+            _ => {
+                debug!("Unhandled QQ event type: {}", event_type);
+            }
+        }
+    }
+
     pub async fn handle_webhook_payload(&self, payload: &Value) -> Result<Value> {
         let op = payload
             .get("op")
@@ -454,6 +532,218 @@ impl QQChannel {
         }))
     }
 
+    /// Run WebSocket Gateway mode
+    async fn run_websocket_gateway(self: Arc<Self>, mut shutdown: tokio::sync::broadcast::Receiver<()>) {
+        let ws_url = self.environment.ws_gateway().to_string();
+
+        loop {
+            // Check if shutdown requested
+            if shutdown.try_recv().is_ok() {
+                info!("QQ WebSocket gateway shutting down");
+                return;
+            }
+
+            info!("Connecting to QQ WebSocket Gateway: {}", ws_url);
+
+            match connect_async(&ws_url).await {
+                Ok((ws_stream, _)) => {
+                    info!("QQ WebSocket connection established");
+
+                    let (mut write, mut read) = ws_stream.split();
+                    let mut last_sequence: Option<u64> = None;
+                    let mut heartbeat_interval: u32 = 41250; // Default 41.25 seconds
+
+                    // Wait for Hello message
+                    let hello_received = loop {
+                        tokio::select! {
+                            _ = shutdown.recv() => {
+                                info!("QQ WebSocket gateway shutting down during hello");
+                                return;
+                            }
+                            msg = read.next() => {
+                                match msg {
+                                    Some(Ok(WsMessage::Text(text))) => {
+                                        match serde_json::from_str::<GatewayPayload>(&text) {
+                                            Ok(payload) if payload.op == op_code::HELLO => {
+                                                if let Ok(hello_data) = serde_json::from_value::<HelloData>(payload.d) {
+                                                    heartbeat_interval = hello_data.heartbeat_interval;
+                                                    info!("QQ WebSocket hello received, heartbeat interval: {}ms", heartbeat_interval);
+                                                    break true;
+                                                }
+                                            }
+                                            Ok(payload) => {
+                                                debug!("Unexpected message before hello: op={}", payload.op);
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to parse hello message: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Some(Ok(WsMessage::Ping(data))) => {
+                                        if let Err(e) = write.send(WsMessage::Pong(data)).await {
+                                            error!("Failed to send pong: {}", e);
+                                            break false;
+                                        }
+                                    }
+                                    Some(Ok(WsMessage::Close(_))) => {
+                                        warn!("WebSocket closed by server during hello");
+                                        break false;
+                                    }
+                                    Some(Err(e)) => {
+                                        error!("WebSocket error during hello: {}", e);
+                                        break false;
+                                    }
+                                    None => {
+                                        warn!("WebSocket stream ended during hello");
+                                        break false;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    };
+
+                    if !hello_received {
+                        warn!("Failed to receive hello, reconnecting...");
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        continue;
+                    }
+
+                    // Send Identify
+                    match self.get_access_token().await {
+                        Ok(token) => {
+                            let identify = json!({
+                                "op": op_code::IDENTIFY,
+                                "d": {
+                                    "token": format!("QQBot {}", token),
+                                    "intents": DEFAULT_INTENTS,
+                                    "shard": [0, 1],
+                                    "properties": {
+                                        "$os": std::env::consts::OS,
+                                        "$browser": "blockcell",
+                                        "$device": "blockcell"
+                                    }
+                                }
+                            });
+
+                            if let Err(e) = write.send(WsMessage::Text(identify.to_string())).await {
+                                error!("Failed to send identify: {}", e);
+                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                continue;
+                            }
+
+                            info!("QQ WebSocket identify sent");
+                        }
+                        Err(e) => {
+                            error!("Failed to get access token: {}", e);
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                            continue;
+                        }
+                    }
+
+                    // Heartbeat timer
+                    let mut heartbeat_timer = tokio::time::interval(
+                        std::time::Duration::from_millis(heartbeat_interval as u64)
+                    );
+                    heartbeat_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+                    // Main event loop
+                    loop {
+                        tokio::select! {
+                            _ = shutdown.recv() => {
+                                info!("QQ WebSocket gateway shutting down");
+                                let _ = write.send(WsMessage::Close(None)).await;
+                                return;
+                            }
+
+                            _ = heartbeat_timer.tick() => {
+                                let seq = last_sequence.unwrap_or(0);
+                                let heartbeat = json!({
+                                    "op": op_code::HEARTBEAT,
+                                    "d": seq
+                                });
+                                if let Err(e) = write.send(WsMessage::Text(heartbeat.to_string())).await {
+                                    error!("Failed to send heartbeat: {}", e);
+                                    break;
+                                }
+                                debug!("QQ WebSocket heartbeat sent, seq: {}", seq);
+                            }
+
+                            msg = read.next() => {
+                                match msg {
+                                    Some(Ok(WsMessage::Text(text))) => {
+                                        match serde_json::from_str::<GatewayPayload>(&text) {
+                                            Ok(payload) => {
+                                                // Update sequence
+                                                if let Some(s) = payload.s {
+                                                    last_sequence = Some(s);
+                                                }
+
+                                                match payload.op {
+                                                    op_code::DISPATCH => {
+                                                        if let Some(event_type) = &payload.t {
+                                                            self.handle_dispatch_event(event_type, &payload.d).await;
+                                                        }
+                                                    }
+                                                    op_code::HEARTBEAT_ACK => {
+                                                        debug!("QQ WebSocket heartbeat ack received");
+                                                    }
+                                                    op_code::RECONNECT => {
+                                                        warn!("QQ WebSocket server requested reconnect");
+                                                        break;
+                                                    }
+                                                    op_code::INVALID_SESSION => {
+                                                        warn!("QQ WebSocket invalid session, will reconnect");
+                                                        break;
+                                                    }
+                                                    _ => {
+                                                        debug!("Unhandled QQ WebSocket op code: {}", payload.op);
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to parse QQ WebSocket message: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Some(Ok(WsMessage::Ping(data))) => {
+                                        if let Err(e) = write.send(WsMessage::Pong(data)).await {
+                                            error!("Failed to send pong: {}", e);
+                                            break;
+                                        }
+                                    }
+                                    Some(Ok(WsMessage::Close(frame))) => {
+                                        warn!("QQ WebSocket closed by server: {:?}", frame);
+                                        break;
+                                    }
+                                    Some(Ok(WsMessage::Pong(_))) => {
+                                        // Ignore pong
+                                    }
+                                    Some(Err(e)) => {
+                                        error!("QQ WebSocket error: {}", e);
+                                        break;
+                                    }
+                                    None => {
+                                        warn!("QQ WebSocket stream ended");
+                                        break;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to connect to QQ WebSocket Gateway: {}", e);
+                }
+            }
+
+            // Wait before reconnecting
+            info!("Reconnecting to QQ WebSocket Gateway in 5 seconds...");
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    }
+
     pub async fn run_loop(self: Arc<Self>, mut shutdown: tokio::sync::broadcast::Receiver<()>) {
         if !self.config.channels.qq.enabled {
             info!("QQ channel disabled");
@@ -467,12 +757,23 @@ impl QQChannel {
             return;
         }
 
-        info!("QQ channel started (environment: {:?})", self.environment);
+        // Check mode from config, default to websocket
+        let mode = self.config.channels.qq.mode.to_lowercase();
 
-        // QQ channel is webhook-based, so we just wait for shutdown
-        tokio::select! {
-            _ = shutdown.recv() => {
-                info!("QQ channel shutting down");
+        match mode.as_str() {
+            "webhook" => {
+                info!("QQ channel started in webhook mode (environment: {:?})", self.environment);
+                // Webhook mode: just wait for shutdown
+                tokio::select! {
+                    _ = shutdown.recv() => {
+                        info!("QQ channel shutting down");
+                    }
+                }
+            }
+            _ => {
+                info!("QQ channel started in websocket mode (environment: {:?})", self.environment);
+                // WebSocket mode: actively connect to QQ Gateway
+                self.run_websocket_gateway(shutdown).await;
             }
         }
     }
@@ -742,6 +1043,12 @@ mod tests {
     }
 
     #[test]
+    fn test_qq_environment_ws_gateway() {
+        assert_eq!(QQEnvironment::Production.ws_gateway(), QQ_WS_GATEWAY);
+        assert_eq!(QQEnvironment::Sandbox.ws_gateway(), QQ_SANDBOX_WS_GATEWAY);
+    }
+
+    #[test]
     fn test_extract_message_id() {
         let payload = json!({"id": "msg123"});
         assert_eq!(QQChannel::extract_message_id(&payload), "msg123");
@@ -827,5 +1134,12 @@ mod tests {
             expires_at: now + 200, // Will be invalid due to 300s margin
         };
         assert!(!token.is_valid());
+    }
+
+    #[test]
+    fn test_intents() {
+        // Default intents should include public guild messages and group/c2c events
+        let expected = intents::PUBLIC_GUILD_MESSAGES | intents::GROUP_AND_C2C_EVENT;
+        assert_eq!(DEFAULT_INTENTS, expected);
     }
 }

@@ -922,6 +922,9 @@ pub struct QQConfig {
     /// API environment: production or sandbox
     #[serde(default)]
     pub environment: String,
+    /// Connection mode: "websocket" (default, no public IP needed) or "webhook" (requires public URL)
+    #[serde(default)]
+    pub mode: String,
     /// Allowlist of user IDs. Empty = allow all.
     #[serde(default)]
     pub allow_from: Vec<String>,
@@ -942,6 +945,8 @@ pub struct QQAccountConfig {
     pub app_secret: String,
     #[serde(default)]
     pub environment: String,
+    #[serde(default)]
+    pub mode: String,
     #[serde(default)]
     pub allow_from: Vec<String>,
 }

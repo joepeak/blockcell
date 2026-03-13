@@ -353,6 +353,7 @@ pub fn qq_listener_configs(config: &Config) -> Vec<ListenerConfig> {
             scoped.channels.qq.app_id = account.app_id.clone();
             scoped.channels.qq.app_secret = account.app_secret.clone();
             scoped.channels.qq.environment = account.environment.clone();
+            scoped.channels.qq.mode = account.mode.clone();
             scoped.channels.qq.allow_from = account.allow_from.clone();
             scoped.channels.qq.accounts = HashMap::from([(account_id.to_string(), account.clone())]);
             scoped.channels.qq.default_account_id = Some(account_id.to_string());

@@ -1356,6 +1356,20 @@ pub async fn run(cli_host: Option<String>, cli_port: Option<u16>) -> anyhow::Res
         ));
     }
 
+    #[cfg(feature = "qq")]
+    for listener in blockcell_channels::account::qq_listener_configs(&config) {
+        let listener_name = listener.label.clone();
+        info!(listener = %listener_name, "Starting QQ listener");
+        let qq = Arc::new(blockcell_channels::qq::QQChannel::new(listener.config, inbound_tx.clone()));
+        let shutdown_rx = shutdown_tx.subscribe();
+        channel_handles.push((
+            listener_name,
+            tokio::spawn(async move {
+                qq.run_loop(shutdown_rx).await;
+            }),
+        ));
+    }
+
     // ── Build HTTP/WebSocket server ──
     // Guarantee api_token is Some and non-empty — defensive fallback in case auto-gen above
     // somehow produced None or empty (e.g. env var was whitespace-only).
