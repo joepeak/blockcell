@@ -271,8 +271,8 @@ fn active_model_and_provider(config: &Config) -> (String, Option<String>, &'stat
     )
 }
 
-const EXTERNAL_CHANNELS: [&str; 8] = [
-    "telegram", "whatsapp", "feishu", "slack", "discord", "dingtalk", "wecom", "lark",
+const EXTERNAL_CHANNELS: [&str; 9] = [
+    "telegram", "whatsapp", "feishu", "slack", "discord", "dingtalk", "wecom", "lark", "qq",
 ];
 
 fn known_channel_account_ids(config: &Config, channel: &str) -> Vec<String> {
@@ -1359,6 +1359,20 @@ pub async fn run(cli_host: Option<String>, cli_port: Option<u16>) -> anyhow::Res
         ));
     }
 
+    #[cfg(feature = "qq")]
+    for listener in blockcell_channels::account::qq_listener_configs(&config) {
+        let listener_name = listener.label.clone();
+        info!(listener = %listener_name, "Starting QQ listener");
+        let qq = Arc::new(blockcell_channels::qq::QQChannel::new(listener.config, inbound_tx.clone()));
+        let shutdown_rx = shutdown_tx.subscribe();
+        channel_handles.push((
+            listener_name,
+            tokio::spawn(async move {
+                qq.run_loop(shutdown_rx).await;
+            }),
+        ));
+    }
+
     // ── Build HTTP/WebSocket server ──
     // Guarantee api_token is Some and non-empty — defensive fallback in case auto-gen above
     // somehow produced None or empty (e.g. env var was whitespace-only).
@@ -1564,6 +1578,7 @@ pub async fn run(cli_host: Option<String>, cli_port: Option<u16>) -> anyhow::Res
             "/webhook/wecom",
             get(handle_wecom_webhook).post(handle_wecom_webhook),
         )
+        .route("/webhook/qq", post(handle_qq_webhook))
         .with_state(gateway_state);
 
     let bind_addr = format!("{}:{}", host, port);

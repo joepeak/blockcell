@@ -2,68 +2,21 @@ use blockcell_channels::ChannelManager;
 use blockcell_core::{Config, Paths};
 use tokio::sync::mpsc;
 
-const SUPPORTED_OWNER_CHANNELS: [&str; 8] = [
-    "telegram", "whatsapp", "feishu", "slack", "discord", "dingtalk", "wecom", "lark",
+const SUPPORTED_OWNER_CHANNELS: [&str; 9] = [
+    "telegram", "whatsapp", "feishu", "slack", "discord", "dingtalk", "wecom", "lark", "qq",
 ];
 
 fn known_account_ids(config: &Config, channel: &str) -> Vec<String> {
     let mut ids = match channel {
-        "telegram" => config
-            .channels
-            .telegram
-            .accounts
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>(),
-        "whatsapp" => config
-            .channels
-            .whatsapp
-            .accounts
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>(),
-        "feishu" => config
-            .channels
-            .feishu
-            .accounts
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>(),
-        "slack" => config
-            .channels
-            .slack
-            .accounts
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>(),
-        "discord" => config
-            .channels
-            .discord
-            .accounts
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>(),
-        "dingtalk" => config
-            .channels
-            .dingtalk
-            .accounts
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>(),
-        "wecom" => config
-            .channels
-            .wecom
-            .accounts
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>(),
-        "lark" => config
-            .channels
-            .lark
-            .accounts
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>(),
+        "telegram" => config.channels.telegram.accounts.keys().cloned().collect::<Vec<_>>(),
+        "whatsapp" => config.channels.whatsapp.accounts.keys().cloned().collect::<Vec<_>>(),
+        "feishu" => config.channels.feishu.accounts.keys().cloned().collect::<Vec<_>>(),
+        "slack" => config.channels.slack.accounts.keys().cloned().collect::<Vec<_>>(),
+        "discord" => config.channels.discord.accounts.keys().cloned().collect::<Vec<_>>(),
+        "dingtalk" => config.channels.dingtalk.accounts.keys().cloned().collect::<Vec<_>>(),
+        "wecom" => config.channels.wecom.accounts.keys().cloned().collect::<Vec<_>>(),
+        "lark" => config.channels.lark.accounts.keys().cloned().collect::<Vec<_>>(),
+        "qq" => config.channels.qq.accounts.keys().cloned().collect::<Vec<_>>(),
         _ => Vec::new(),
     };
     ids.sort();
