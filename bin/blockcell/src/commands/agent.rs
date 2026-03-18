@@ -1066,6 +1066,7 @@ fn read_line_with_command_picker(
                         // Submit the input
                         if showing_picker {
                             clear_suggestions(prev_visible_limit, &input, stdout);
+                            prev_visible_limit = 0;
                         }
                         let _ = terminal::disable_raw_mode();
                         println!();
@@ -1234,19 +1235,45 @@ fn extract_command_query(input: &str) -> Option<(usize, &str)> {
     }
 }
 
-/// Filter items based on query - returns all matching items
+/// Filter items based on query - returns all matching items sorted by relevance
 fn filter_items<'a>(items: &'a [CommandItem], query: &str) -> Vec<&'a CommandItem> {
     if query.is_empty() {
         items.iter().collect()
     } else {
         let q = query.to_lowercase();
-        items
+        // Score each item: name starts with query = 3, name contains query = 2, description contains query = 1
+        let mut scored: Vec<(usize, &CommandItem)> = items
             .iter()
-            .filter(|item| {
-                item.name.to_lowercase().contains(&q)
-                    || item.description.to_lowercase().contains(&q)
+            .filter_map(|item| {
+                let name_lower = item.name.to_lowercase();
+                let desc_lower = item.description.to_lowercase();
+                let score = if name_lower.starts_with(&q) {
+                    3
+                } else if name_lower.contains(&q) {
+                    2
+                } else if desc_lower.contains(&q) {
+                    1
+                } else {
+                    0
+                };
+                if score > 0 {
+                    Some((score, item))
+                } else {
+                    None
+                }
             })
-            .collect()
+            .collect();
+
+        // Sort by score first (higher is better), then by name
+        scored.sort_by(|a, b| {
+            if b.0 != a.0 {
+                b.0.cmp(&a.0)
+            } else {
+                a.1.name.cmp(&b.1.name)
+            }
+        });
+
+        scored.into_iter().map(|(_, item)| item).collect()
     }
 }
 

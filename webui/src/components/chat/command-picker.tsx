@@ -98,15 +98,31 @@ export function CommandPicker({ open, query, onSelect, onClose, containerRef }: 
     };
   }, [open, containerRef]);
 
-  // Filter items based on query
+  // Filter items based on query with smart sorting
   const filteredItems = useMemo(() => {
     if (!query) return items;
     const q = query.toLowerCase();
-    return items.filter(
-      (item) =>
-        item.name.toLowerCase().includes(q) ||
-        item.description.toLowerCase().includes(q)
-    );
+
+    // Score each item: name starts with query = 3, name contains query = 2, description contains query = 1
+    const scored = items
+      .map((item) => {
+        const nameLower = item.name.toLowerCase();
+        const descLower = item.description.toLowerCase();
+        let score = 0;
+        if (nameLower.startsWith(q)) score = 3;
+        else if (nameLower.includes(q)) score = 2;
+        else if (descLower.includes(q)) score = 1;
+        return { item, score };
+      })
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => {
+        // Sort by score first, then by name
+        if (b.score !== a.score) return b.score - a.score;
+        return a.item.name.localeCompare(b.item.name);
+      })
+      .map(({ item }) => item);
+
+    return scored;
   }, [items, query]);
 
   // Reset selection when filtered items change
