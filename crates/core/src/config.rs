@@ -175,7 +175,7 @@ fn default_temperature() -> f32 {
 }
 
 fn default_max_tool_iterations() -> u32 {
-    20
+    30
 }
 
 fn default_llm_max_retries() -> u32 {
