@@ -1509,6 +1509,14 @@ pub async fn run(cli_host: Option<String>, cli_port: Option<u16>) -> anyhow::Res
             "/v1/evolution/:id",
             get(handle_evolution_detail).delete(handle_evolution_delete),
         )
+        .route(
+            "/v1/evolution/:id/stop",
+            post(handle_evolution_stop),
+        )
+        .route(
+            "/v1/evolution/:id/resume",
+            post(handle_evolution_resume),
+        )
         .route("/v1/channels/status", get(handle_channels_status))
         .route("/v1/channels", get(handle_channels_list))
         .route("/v1/channels/:id", put(handle_channel_update))
