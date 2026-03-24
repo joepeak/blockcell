@@ -603,11 +603,25 @@ fn split_message(text: &str, max_len: usize) -> Vec<String> {
             break;
         }
 
-        // Try to split at newline boundary
-        let split_at = remaining[..max_len]
-            .rfind('\n')
-            .map(|i| i + 1)
-            .unwrap_or(max_len);
+        // Find a valid UTF-8 boundary at or before the max length.
+        let mut split_at = max_len;
+        while split_at > 0 && !remaining.is_char_boundary(split_at) {
+            split_at -= 1;
+        }
+
+        // Try to split at a newline boundary within the safe range.
+        if let Some(last_newline) = remaining[..split_at].rfind('\n') {
+            split_at = last_newline + 1;
+        }
+
+        // If the max length is smaller than a single char, fall back to one char.
+        if split_at == 0 {
+            split_at = remaining
+                .chars()
+                .next()
+                .map(|c| c.len_utf8())
+                .unwrap_or(max_len);
+        }
 
         chunks.push(remaining[..split_at].to_string());
         remaining = &remaining[split_at..];
@@ -619,6 +633,34 @@ fn split_message(text: &str, max_len: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_split_message_short() {
+        let chunks = split_message("hello world", 4096);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "hello world");
+    }
+
+    #[test]
+    fn test_split_message_utf8_boundary() {
+        let text = "你好".repeat(1000);
+        let chunks = split_message(&text, 2000);
+        assert!(chunks.len() >= 2);
+        for chunk in &chunks {
+            assert!(chunk.len() <= 2000);
+            assert!(std::str::from_utf8(chunk.as_bytes()).is_ok());
+        }
+        assert_eq!(chunks.concat(), text);
+    }
+
+    #[test]
+    fn test_split_message_long() {
+        let text = "line1\nline2\nline3\nline4";
+        let chunks = split_message(text, 12);
+        assert!(chunks.len() >= 2);
+        let joined: String = chunks.join("");
+        assert_eq!(joined, text);
+    }
 
     #[test]
     fn test_generate_uin_is_base64() {
@@ -641,21 +683,6 @@ mod tests {
         assert!(parts[1].chars().all(|c| c.is_ascii_digit()));
         // hex part
         assert!(parts[2].chars().all(|c| c.is_ascii_hexdigit()));
-    }
-
-    #[test]
-    fn test_split_message_short() {
-        let chunks = split_message("hello", 100);
-        assert_eq!(chunks, vec!["hello"]);
-    }
-
-    #[test]
-    fn test_split_message_long() {
-        let text = "line1\nline2\nline3\nline4";
-        let chunks = split_message(text, 12);
-        assert!(chunks.len() >= 2);
-        let joined: String = chunks.join("");
-        assert_eq!(joined, text);
     }
 
     #[test]
