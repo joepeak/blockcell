@@ -2874,28 +2874,8 @@ impl AgentRuntime {
             let final_response = format!("⏰ [{}] {}", job_name, reminder_msg);
             info!(job_name = %job_name, "Cron reminder delivered directly (bypassing LLM)");
 
-            let persist_session_key =
-                if let Some(true) = msg.metadata.get("deliver").and_then(|v| v.as_bool()) {
-                    if let (Some(channel), Some(to)) = (
-                        msg.metadata.get("deliver_channel").and_then(|v| v.as_str()),
-                        msg.metadata.get("deliver_to").and_then(|v| v.as_str()),
-                    ) {
-                        if !channel.is_empty() && !to.is_empty() {
-                            blockcell_core::build_session_key(channel, to)
-                        } else {
-                            session_key.clone()
-                        }
-                    } else {
-                        session_key.clone()
-                    }
-                } else {
-                    session_key.clone()
-                };
-
-            let reminder_history_message = ChatMessage::assistant(&final_response);
-            let _ = self
-                .session_store
-                .append(&persist_session_key, &reminder_history_message);
+            // Don't store reminder message in history to prevent LLM from learning the format
+            // Users can view their scheduled tasks via `cron list` tool
 
             // Send to outbound (CLI printer + gateway's outbound_to_ws_bridge)
             if let Some(tx) = &self.outbound_tx {
@@ -3053,6 +3033,7 @@ impl AgentRuntime {
         let prompt_ctx = blockcell_tools::PromptContext {
             channel: &msg.channel,
             intents: &mode_names,
+            default_timezone: self.config.default_timezone.as_deref(),
         };
         let tool_name_refs: Vec<&str> = tool_names.iter().map(|s| s.as_str()).collect();
         let mut tool_prompt_rules = self
@@ -4231,6 +4212,7 @@ impl AgentRuntime {
         let prompt_ctx = blockcell_tools::PromptContext {
             channel: &msg.channel,
             intents: &mode_names,
+            default_timezone: self.config.default_timezone.as_deref(),
         };
         let tool_name_refs = tool_names
             .iter()
